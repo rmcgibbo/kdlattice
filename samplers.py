@@ -2,7 +2,9 @@ import os, sys
 import numpy as np
 import scipy.sparse
 import operator
+import itertools
 from msmbuilder.MSMLib import estimate_transition_matrix
+from msmbuilder import msm_analysis
 from collections import defaultdict
 
 
@@ -22,6 +24,8 @@ class Sampler(object):
         # if you never jump TO it, whereas n_visits_to only
         # includes points that a transition ended in.
         self.n_visits_to = defaultdict(lambda : 0)
+        self.n_visits_from = defaultdict(lambda : 0)
+        self.n_visits_tofrom = defaultdict(lambda : 0)
         
 
     def run(self):
@@ -34,8 +38,14 @@ class Sampler(object):
         for i in xrange(self.n_steps):
             old_pt = self.walker.get_point()
             new_pt = self.walker.next()
-            self.tcounts_dd[(old_pt, new_pt)]
+            self.tcounts_dd[(old_pt, new_pt)] += 1
+            #print 'old', old_pt, 'new', new_pt
+            
+            self.n_visits_from[old_pt] += 1
             self.n_visits_to[new_pt] += 1
+            self.n_visits_tofrom[old_pt] += 1
+            self.n_visits_tofrom[new_pt] += 1
+            
             self.all_points.add(new_pt)
             
             # run the adaptive sampling algorithm
@@ -57,6 +67,8 @@ class Sampler(object):
             p1, p2 = key
             i, j = mapping[p1], mapping[p2]
             tcounts[i,j] = val
+        
+        tcounts = tcounts + tcounts.T
 
         # call msmbuilder libraries
         # this one is just the regular row normalization estimator, and is not
@@ -69,13 +81,15 @@ class MinCounts(Sampler):
         # sort by value, then get the first element -- this is the state with
         # the fewest counts
         # http://writeonly.wordpress.com/2008/08/30/sorting-dictionaries-by-value-in-python-improved/
-        pt, counts = sorted(self.n_visits_to.iteritems(), key=operator.itemgetter(1))[0]
+        pt, counts = sorted(self.n_visits_tofrom.iteritems(), key=operator.itemgetter(1))[0]
         
+        #print 'pt', pt, 'counts', counts
         self.walker.set_point(pt)
 
 
 class Meta1(Sampler):
-    def __init__(self, w, sigma):
+    def __init__(self, walker, n_steps, w, sigma):
+        super(Meta1, self).__init__(walker, n_steps)
         self.w = w
         self.sigma = sigma
 
@@ -84,14 +98,19 @@ class Meta1(Sampler):
         
         # if we can guarentee that the counts matrix is reversible, we can
         # do this faster without the eigensolver, but I don't want to do that yet.
-        vectors = msm_analysis.get_eigenvectors(tprob, 5)[1]
+        vectors = msm_analysis.get_eigenvectors(tprob, min(5, tprob.shape[0]))[1]
         populations = vectors[:, 0]
         
-        raise NotImplementedError()
-\
+        # this chooses the point from the multinomial, but its now indexed
+        # in the mapped (integer) space
+        chosen = np.where(np.random.multinomial(1, populations) == 1)[0][0]
+        
+        # back out the chosen item as a tuple, such that mapping[k] == chosen
+        k = next(k for k,v in mapping.iteritems() if v == chosen)
+        
+        self.walker.set_point(k)
 
-
-
+    
 
 
 
